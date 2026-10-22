@@ -8,9 +8,7 @@ doesn't match your filters, and shows you what's left. You say yes or no. Repeat
 
 Think Stumbleupon, but for Redbubble.
 
----
 <img width="1894" height="887" alt="Screenshot 2026-10-22 124751" src="https://github.com/user-attachments/assets/61ceb067-a7b2-47a3-bafe-06595f5626f3" />
----
 
 ## Install
 
