@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-accent="mint">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+
+  <header class="bar">
+    <div class="brand"><img src="icon.svg" alt="" class="brand-icon" /><span>RB Stumbler</span></div>
+    <div id="status" class="status">Idle</div>
+  </header>
+
+  <!-- ============================ DEAL ============================ -->
+  <section class="view" data-view="stumble">
+    <div class="card" id="dealCard">
+      <div class="preview" id="previewWrap">
+        <img id="previewImg" alt="" />
+        <div class="preview-empty" id="previewEmpty">
+          Press <b>Stumble</b> to draw one
+        </div>
+      </div>
+      <div class="meta">
+        <div class="title" id="dTitle">—</div>
+        <div class="sub" id="dSub">—</div>
+        <div class="tags" id="dTags"></div>
+        <div class="heartrow">
+          <button id="btnHeart" class="heart" disabled
+                  title="Favourite this design on Redbubble. You need to be signed in.">
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+              <path d="M12 21s-8-4.9-8-10.2A4.8 4.8 0 0 1 12 7a4.8 4.8 0 0 1 8 3.8C20 16.1 12 21 12 21z"/>
+            </svg>
+            <span id="heartLabel">Heart it on Redbubble</span>
+          </button>
+          <button id="btnSave" class="chip" disabled title="Keep this on your board">
+            <span id="saveLabel">Save to board</span>
+          </button>
+          <button id="btnDismiss" class="chip" disabled title="Never show this one again">
+            <span>Dismiss</span>
+          </button>
+        </div>
+        <div id="dealNote" class="dealnote" hidden></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <div class="act">
+        <button id="btnStumble" class="primary">Stumble</button>
+        <span class="act-desc">Stumble a new design from a random search</span>
+      </div>
+      <div class="act">
+        <button id="btnOpen" disabled>Open</button>
+        <span class="act-desc">Open the design on screen in your browser</span>
+      </div>
+      <div class="act">
+        <button id="btnSkip" disabled>Skip</button>
+        <span class="act-desc">Turn this one down without opening it</span>
+      </div>
+      <div class="act">
+        <button id="btnReroll" disabled>Reroll</button>
+        <span class="act-desc">Another from the same search, without burning a query</span>
+      </div>
+      <div class="act">
+        <button id="btnSimilar" disabled>Similar</button>
+        <span class="act-desc">Follow similar designs from this one</span>
+      </div>
+      <div class="act">
+        <button id="btnUndo" disabled>Undo</button>
+        <span class="act-desc">Take back the last judgment and go back</span>
+      </div>
+    </div>
+
+    <label class="auto">
+      <input type="checkbox" id="autoToggle" />
+      <span>Auto-stumble every <input type="number" id="autoSeconds" min="3" max="600" step="1" />s</span>
+    </label>
+  </section>
+
+  <!-- =========================== QUERIES =========================== -->
+  <section class="view" data-view="queries" hidden>
+    <p class="lede">Searches are picked at random. Ticked queries only. Nothing repeats until
+      every ticked query has been used once.</p>
+
+    <ul class="list" id="queryList"></ul>
+
+    <div class="row">
+      <input type="text" id="newQuery" placeholder="Add a query…" />
+      <button id="btnAddQuery">Add</button>
+    </div>
+
+    <details class="bulk">
+      <summary>Paste a whole list</summary>
+      <textarea id="bulkQueries" rows="5" placeholder="one query per line"></textarea>
+      <button id="btnBulkAdd">Add them all</button>
+    </details>
+
+    <div class="row">
+      <button id="btnAll">All</button>
+      <button id="btnClearQueries" class="warn">Clear All</button>
+    </div>
+    <button id="btnRestoreQueries" class="wide">Restore defaults</button>
+  </section>
+
+  <!-- =========================== FILTERS =========================== -->
+  <section class="view" data-view="filters" hidden>
+    <div class="block">
+      <label class="toggle">
+        <input type="checkbox" id="usePriceFilter" />
+        <span>Only designs in this price range</span>
+      </label>
+      <div class="row">
+        <input type="number" id="minPrice" step="0.01" placeholder="min" />
+        <input type="number" id="maxPrice" step="0.01" placeholder="max" />
+      </div>
+      <p class="note">Redbubble shows the <i>cheapest</i> product for a design, usually a
+        sticker. So "min 15" means the base item is $15, not the poster.</p>
+    </div>
+
+    <div class="block">
+      <label class="toggle">
+        <input type="checkbox" id="useTagFilter" />
+        <span>Filter out designs with unwanted tags</span>
+      </label>
+      <ul class="list compact" id="tagList"></ul>
+      <div class="row">
+        <input type="text" id="newTag" placeholder="Add a tag…" />
+        <button id="btnAddTag">Add</button>
+      </div>
+      <button id="btnSuggestTags" class="wide">Add common slop tags</button>
+    </div>
+
+    <div class="block">
+      <label class="toggle">
+        <input type="checkbox" id="useShopFilter" />
+        <span>Filter out unwanted shops</span>
+      </label>
+      <ul class="list compact" id="shopList"></ul>
+      <div class="row">
+        <input type="text" id="newShop" placeholder="Add a shop…" />
+        <button id="btnAddShop">Add</button>
+      </div>
+    </div>
+
+    <div class="block">
+      <label class="toggle">
+        <input type="checkbox" id="useProductTypeFilter" />
+        <span>Only these product types</span>
+      </label>
+      <ul class="list compact" id="typeList"></ul>
+      <div class="row">
+        <select id="typeChoices"></select>
+        <button id="btnAddType">Add</button>
+      </div>
+    </div>
+
+    <div class="block">
+      <label class="toggle">
+        <input type="checkbox" id="useMinTagsFilter" />
+        <span>Only designs tagged at least this many times</span>
+      </label>
+      <div class="row">
+        <input type="number" id="minTags" min="0" max="30" step="1" placeholder="none" />
+      </div>
+    </div>
+
+    <div class="block">
+      <button id="btnClearFilters" class="warn wide">Clear All filters</button>
+    </div>
+  </section>
+
+  <!-- =========================== SETTINGS =========================== -->
+  <section class="view" data-view="settings" hidden>
+    <details class="block sblock" open>
+      <summary>Appearance</summary>
+        <div class="row">
+          <label for="theme">Theme</label>
+          <select id="theme">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="system">Match system</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="accent">Colour</label>
+          <select id="accent">
+            <option value="mint">Mint</option>
+            <option value="sky">Sky</option>
+            <option value="rose">Rose</option>
+            <option value="amber">Amber</option>
+            <option value="violet">Violet</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="fontFamily">Font</label>
+          <select id="fontFamily">
+            <option value="system">System</option>
+            <option value="sans">Sans</option>
+            <option value="serif">Serif</option>
+            <option value="mono">Mono</option>
+            <option value="rounded">Rounded</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="fontScale">Text size</label>
+          <select id="fontScale">
+            <option value="small">Small</option>
+            <option value="medium">Medium</option>
+            <option value="large">Large</option>
+            <option value="xlarge">Extra large</option>
+          </select>
+        </div>
+    </details>
+
+    <details class="block sblock">
+      <summary>Search</summary>
+        <div class="row">
+          <label for="pages">Pages</label>
+          <input type="number" id="pages" min="1" max="50" step="1" />
+        </div>
+        <div class="row">
+          <label for="delayMs">Pause (ms)</label>
+          <input type="number" id="delayMs" min="0" max="60000" step="100" />
+        </div>
+        <div class="row">
+          <label for="searchUrlTemplate">Search URL</label>
+          <input type="text" id="searchUrlTemplate" placeholder="built-in default" />
+        </div>
+        <p class="note">Only fill this in if Redbubble changed how search URLs work. Use
+          <code>{query}</code>, <code>{page}</code>, <code>{sort}</code>. Leave blank otherwise.</p>
+    </details>
+
+    <details class="block sblock">
+      <summary>Behaviour</summary>
+        <label class="toggle"><input type="checkbox" id="excludeSeen" /><span>Never show the same design twice</span></label>
+        <label class="toggle"><input type="checkbox" id="openOnStumble" /><span>Open it straight away in a new tab</span></label>
+        <div class="row">
+          <label for="openTarget">Open in</label>
+          <select id="openTarget">
+            <option value="new">A new tab</option>
+            <option value="same">Current tab</option>
+          </select>
+        </div>
+        <div class="row">
+          <label for="historyLimit">History size</label>
+          <input type="number" id="historyLimit" min="0" max="50000" step="500" />
+        </div>
+    </details>
+
+    <details class="block sblock" open>
+      <summary>Stumbling</summary>
+      <div class="row">
+        <label for="pickOrder">Stumble order</label>
+        <select id="pickOrder"></select>
+      </div>
+      <p class="note" id="pickOrderHint"></p>
+      <label class="toggle">
+        <input type="checkbox" id="affinityEnabled" />
+        <span>Let your hearts steer future stumbles</span>
+      </label>
+      <div class="row">
+        <label for="affinityStrength">Strength</label>
+        <input type="number" id="affinityStrength" min="1" max="5" step="1" />
+      </div>
+      <button id="btnResetAffinity" class="warn wide">Reset</button>
+    </details>
+
+    <details class="block sblock">
+      <summary>Data</summary>
+        <div class="row">
+          <button id="btnExport">Export Settings</button>
+          <button id="btnImport">Import Settings</button>
+        </div>
+        <div class="row">
+          <button id="btnShowTab">Show search tab</button>
+          <button id="btnResetTab" class="warn">Reset search tab</button>
+        </div>
+        <input type="file" id="importFile" accept="application/json" hidden />
+    </details>
+
+    <div class="block links">
+      <a href="#" id="linkAbout" class="link">About →</a>
+    </div>
+
+    <p class="credits">
+      Made With ❤️ By
+      <a href="https://ko-fi.com/kungpowunicorn" target="_blank" rel="noopener noreferrer">KungPowUnicorn</a>
+    </p>
+  </section>
+
+  <!-- ========================== MOODBOARD ========================== -->
+  <section class="view" data-view="moodboard" hidden>
+    <p class="lede" id="boardCount">Designs you've kept.</p>
+    <div class="row">
+      <button id="btnExportBoard" class="wide">Export board as CSV</button>
+    </div>
+    <div id="boardGrid" class="board"></div>
+  </section>
+
+  <!-- =========================== HISTORY =========================== -->
+  <section class="view" data-view="history" hidden>
+    <button id="btnClearHistory" class="warn wide">Clear History</button>
+    <p class="lede" id="historyCount">Everything you've been offered.</p>
+    <ul class="list compact" id="historyList"></ul>
+  </section>
+
+  <!-- ============================ TABS ============================ -->
+  <nav class="tabs">
+    <button data-tab="stumble" class="on">Stumble</button>
+    <button data-tab="queries">Queries</button>
+    <button data-tab="filters">Filters</button>
+    <button data-tab="settings">Settings</button>
+    <button data-tab="moodboard">Board</button>
+    <button data-tab="history">History</button>
+  </nav>
+
+  <!-- ============================ MODAL ============================ -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 id="modalTitle"><img src="icon.svg" alt="" class="modal-icon" />RB Stumbler</h2>
+      <p class="modal-ver">v0.4</p>
+
+      <h3>What it does</h3>
+      <p>Picks one of your search queries at random, searches Redbubble, throws out whatever
+        doesn't match your filters, and hands you a random survivor instead of making you
+        scroll through pages of slop.</p>
+
+      <h3>Keyboard</h3>
+      <table class="keys">
+        <tr><td><kbd>Enter</kbd></td><td>Stumble a new design</td></tr>
+        <tr><td><kbd>O</kbd></td><td>Open the design on screen</td></tr>
+        <tr><td><kbd>N</kbd></td><td>Skip to another</td></tr>
+        <tr><td><kbd>R</kbd></td><td>Reroll from the same search</td></tr>
+        <tr><td><kbd>S</kbd></td><td>Find similar designs</td></tr>
+        <tr><td><kbd>D</kbd></td><td>Dismiss this one for good</td></tr>
+        <tr><td><kbd>B</kbd></td><td>Save to your board</td></tr>
+        <tr><td><kbd>Z</kbd></td><td>Undo the last judgment</td></tr>
+        <tr><td><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td><td>Stumble from any page</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close this window</td></tr>
+      </table>
+      <p class="note">The shortcut works anywhere in Chrome. Rebind it at
+        <code>chrome://extensions/shortcuts</code> if it clashes with something.</p>
+
+      <h3>Privacy</h3>
+      <p>Nothing leaves your machine. The extension has permission for
+        <code>redbubble.com</code> only, and stores your settings and history in
+        <code>chrome.storage.local</code>. Clearing history in the History tab wipes it.</p>
+
+      <button id="btnCloseModal" class="primary">Close</button>
+    </div>
+  </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+  <script src="defaults.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
