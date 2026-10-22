@@ -44,11 +44,7 @@ Shortcuts: <kbd>O</kbd> open · <kbd>N</kbd> skip · <kbd>R</kbd> reroll ·
 - **Board** — everything you saved, exportable as a spreadsheet
 - **History** — everything you've seen, and what you thought of it
 
----
-
 <img width="1894" height="887" alt="Screenshot 2026-10-22 124751" src="https://github.com/user-attachments/assets/61ceb067-a7b2-47a3-bafe-06595f5626f3" />
-
----
 
 ## Things worth knowing
 
