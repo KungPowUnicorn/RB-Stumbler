@@ -1,5 +1,5 @@
 // Side panel: the whole GUI. Reads settings from chrome.storage, asks the
-// service worker to crawl search pages, applies filters locally, deals one
+// service worker to crawl search pages, applies filters locally, shows one
 // random survivor.
 
 const $ = (id) => document.getElementById(id);
@@ -16,7 +16,7 @@ let current = null; // the design currently on display
 let activeTab = "stumble"; // which tab is on screen, so we know what to redraw
 let busy = false;
 let busyHeart = false;
-let autoTimer = null;
+let autoTimers = []; // one per enabled auto mode
 let toastTimer = null;
 
 // --- feature state -----------------------------------------------------
@@ -25,7 +25,7 @@ let moodboard = []; // designs you explicitly kept
 let dismissed = []; // seen and turned down on purpose
 let lastPool = []; // survivors from the last search, for Reroll
 let lastPoolQuery = "";
-let undoStack = []; // previous deals, for Undo
+let undoStack = []; // what was on screen before, for Undo
 let lastStats = null; // { found, kept, byReason } from the last search
 
 const RB_MODALS = ["modal"];
@@ -53,14 +53,61 @@ function applyTheme() {
   root.setAttribute("data-scale", settings.fontScale || "medium");
 }
 
+// v0.4.0 -> v0.5.0. Two storage keys were renamed when "dealt" was purged, and
+// history rows carried verdict: "dealt". Copy the old keys and rewrite the
+// verdicts once, so an upgrade keeps its history instead of quietly starting
+// over. Runs on every boot; after the first run there is nothing left to do.
+async function migrateLegacyKeys() {
+  try {
+    const legacyNames = Object.keys(RB_LEGACY_KEYS || {});
+    if (legacyNames.length) {
+      const old = await chrome.storage.local.get(legacyNames);
+      const move = {};
+      const drop = [];
+      for (const [from, to] of Object.entries(RB_LEGACY_KEYS)) {
+        if (from in old && old[from] !== undefined) {
+          if (!(to in old) || old[to] === undefined) move[to] = old[from];
+          drop.push(from);
+        }
+      }
+      if (Object.keys(move).length) await chrome.storage.local.set(move);
+      // NB: storage.local.set({k: null}) *stores* null, it does not delete.
+      // Removing needs remove(), or the old key lingers and this runs forever.
+      if (drop.length) await chrome.storage.local.remove(drop);
+    }
+    if (RB_LEGACY_DROP && RB_LEGACY_DROP.length) {
+      await chrome.storage.local.remove(RB_LEGACY_DROP);
+    }
+
+    const storedHistory = await chrome.storage.local.get(RB_STORAGE_KEYS.history);
+    const rows = storedHistory[RB_STORAGE_KEYS.history];
+    if (Array.isArray(rows) && rows.some((h) => h && h.verdict === "dealt")) {
+      await chrome.storage.local.set({
+        [RB_STORAGE_KEYS.history]: rows.map((h) =>
+          h && h.verdict === "dealt" ? Object.assign({}, h, { verdict: "shown" }) : h
+        ),
+      });
+    }
+  } catch (err) {
+    // Deliberately swallowed: a failed migration must never stop the panel
+    // from opening. Note the cost — this also hides programming errors such as
+    // reaching for the wrong namespace, which is exactly how a bug in here can
+    // go unnoticed. The Firefox test suite runs with `chrome` booby-trapped
+    // for precisely this reason.
+    console.warn("[RB Stumbler] legacy storage migration skipped:", err);
+  }
+}
+
 async function loadAll() {
+  await migrateLegacyKeys();
+
   const stored = await chrome.storage.local.get([
     RB_STORAGE_KEYS.settings,
     RB_STORAGE_KEYS.history,
     RB_STORAGE_KEYS.affinity,
     RB_STORAGE_KEYS.moodboard,
     RB_STORAGE_KEYS.dismissed,
-    RB_STORAGE_KEYS.lastDeal,
+    RB_STORAGE_KEYS.lastShown,
   ]);
   settings = Object.assign(
     {},
@@ -71,6 +118,7 @@ async function loadAll() {
   if (!Array.isArray(settings.queriesOff)) settings.queriesOff = [];
   if (!Array.isArray(settings.excludedTags)) settings.excludedTags = [];
   if (!Array.isArray(settings.excludedShops)) settings.excludedShops = [];
+  if (!Array.isArray(settings.shopWhitelist)) settings.shopWhitelist = [];
   if (!Array.isArray(settings.productTypes)) settings.productTypes = [];
   history = stored[RB_STORAGE_KEYS.history] || [];
   affinity = stored[RB_STORAGE_KEYS.affinity] || { tags: {}, shops: {} };
@@ -262,6 +310,7 @@ function renderList(target, arr, onRemove) {
 function renderFilters() {
   $("useTagFilter").checked = !!settings.useTagFilter;
   $("useShopFilter").checked = !!settings.useShopFilter;
+  $("useShopWhitelist").checked = !!settings.useShopWhitelist;
   $("useProductTypeFilter").checked = !!settings.useProductTypeFilter;
   $("usePriceFilter").checked = !!settings.usePriceFilter;
   $("useMinTagsFilter").checked = !!settings.useMinTagsFilter;
@@ -271,6 +320,7 @@ function renderFilters() {
 
   renderList("tagList", settings.excludedTags, () => {});
   renderList("shopList", settings.excludedShops, () => {});
+  renderList("shopWhitelistList", settings.shopWhitelist, () => {});
   renderList("typeList", settings.productTypes, () => {});
 
   const sel = $("typeChoices");
@@ -319,6 +369,8 @@ function renderSettings() {
   $("historyLimit").value = settings.historyLimit;
   $("autoToggle").checked = !!settings.autoMode;
   $("autoSeconds").value = settings.autoSeconds;
+  $("autoRerollToggle").checked = !!settings.autoRerollMode;
+  $("autoRerollSeconds").value = settings.autoRerollSeconds ?? 15;
   $("pickOrder").value = settings.pickOrder || "random";
   $("affinityEnabled").checked = !!settings.affinityEnabled;
   $("affinityStrength").value = settings.affinityStrength || 1;
@@ -363,6 +415,10 @@ function bindSettings() {
   });
   $("useShopFilter").addEventListener("change", async (e) => {
     settings.useShopFilter = e.target.checked;
+    await save();
+  });
+  $("useShopWhitelist").addEventListener("change", async (e) => {
+    settings.useShopWhitelist = e.target.checked;
     await save();
   });
   $("useProductTypeFilter").addEventListener("change", async (e) => {
@@ -428,18 +484,20 @@ function bindSettings() {
   });
   $("btnClearFilters").addEventListener("click", async () => {
     const has = settings.excludedTags.length || settings.excludedShops.length ||
-      settings.productTypes.length || settings.minPrice != null ||
-      settings.maxPrice != null || settings.minTags != null;
+      settings.shopWhitelist.length || settings.productTypes.length ||
+      settings.minPrice != null || settings.maxPrice != null || settings.minTags != null;
     if (!has) return toast("No filters are set");
     if (!confirm("Clear every filter? Lists emptied, price and tag limits reset, all filter tick boxes off.")) return;
     settings.excludedTags = [];
     settings.excludedShops = [];
+    settings.shopWhitelist = [];
     settings.productTypes = [];
     settings.minPrice = null;
     settings.maxPrice = null;
     settings.minTags = null;
     settings.useTagFilter = false;
     settings.useShopFilter = false;
+    settings.useShopWhitelist = false;
     settings.useProductTypeFilter = false;
     settings.usePriceFilter = false;
     settings.useMinTagsFilter = false;
@@ -493,6 +551,17 @@ function bindSettings() {
   });
   $("autoToggle").addEventListener("change", async (e) => {
     settings.autoMode = e.target.checked;
+    await save();
+    restartAuto();
+  });
+  $("autoRerollSeconds").addEventListener("change", async (e) => {
+    settings.autoRerollSeconds = Math.min(600, Math.max(3, parseInt(e.target.value || "15", 10)));
+    e.target.value = settings.autoRerollSeconds;
+    await save();
+    if (settings.autoRerollMode) restartAuto();
+  });
+  $("autoRerollToggle").addEventListener("change", async (e) => {
+    settings.autoRerollMode = e.target.checked;
     await save();
     restartAuto();
   });
@@ -550,6 +619,10 @@ function bindSettings() {
     if (e.key === "Enter") $("btnAddTag").click();
   });
   $("btnAddShop").addEventListener("click", () => addToList("excludedShops", "newShop"));
+  $("btnAddShopWhitelist").addEventListener("click", () => addToList("shopWhitelist", "newShopWhitelist"));
+  $("newShopWhitelist").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("btnAddShopWhitelist").click();
+  });
   $("newShop").addEventListener("keydown", (e) => {
     if (e.key === "Enter") $("btnAddShop").click();
   });
@@ -625,11 +698,11 @@ function bindSettings() {
     b.addEventListener("click", () => activateTab(b.dataset.tab));
   });
   $("btnStumble").addEventListener("click", stumble);
-  $("btnSkip").addEventListener("click", stumble);
   $("btnOpen").addEventListener("click", openCurrent);
   $("btnHeart").addEventListener("click", heartCurrent);
   $("btnSave").addEventListener("click", saveCurrent);
   $("btnDismiss").addEventListener("click", dismissCurrent);
+  $("btnBlockShop").addEventListener("click", blockCurrentShop);
   $("btnReroll").addEventListener("click", reroll);
   $("btnSimilar").addEventListener("click", similar);
   $("btnUndo").addEventListener("click", undo);
@@ -684,12 +757,22 @@ function dismissedKeys() {
 // Returns null when the design passes, or a short reason string when it doesn't.
 // The reasons are counted so the panel can tell you *why* a search came back empty.
 function checkFilters(d, s, seen, gone) {
-  if (s.excludeSeen && seen.has(d.key)) return "already dealt";
+  if (s.excludeSeen && seen.has(d.key)) return "already seen";
   if (gone.has(d.key)) return "dismissed";
 
   if (s.useShopFilter && s.excludedShops.length) {
     const a = (d.artist || "").toLowerCase();
     if (s.excludedShops.some((x) => a.includes(String(x).toLowerCase()))) return "blocked shop";
+  }
+
+  // Allowlist is checked after the blocklist, so a shop can be on the list and
+  // still be vetoed. An empty list never filters — ticking the box before
+  // typing anything shouldn't blank out every search.
+  if (s.useShopWhitelist && s.shopWhitelist.length) {
+    const a = (d.artist || "").trim().toLowerCase();
+    if (!a || !s.shopWhitelist.some((x) => String(x).trim().toLowerCase() === a)) {
+      return "shop not allowed";
+    }
   }
 
   if (s.useTagFilter && s.excludedTags.length) {
@@ -808,20 +891,32 @@ async function undo() {
 
   lastPool = lastPool.filter((d) => d.key !== back.key);
   current = null;
-  showDeal(back);
-  // showDeal re-added it to history, which is correct: it was dealt before.
+  showDesign(back);
+  // showDesign re-added it to history, which is correct: it was shown before.
   setStatus("Took that back", "");
 }
 
 // Another from the search we already ran — no new query, no bag advance.
 async function reroll() {
   if (!lastPool.length) return stumble();
-  const rest = lastPool.filter((d) => d.key !== (current && current.key));
-  if (!rest.length) return toast("Nothing else left in this pool — Stumble for a new search");
-  const pick = pickFrom(rest, settings);
+
+  // Drawing from this pool *spends* it: the design on screen leaves the pool
+  // before we choose, and the one we choose leaves too.
+  //
+  // Both halves are load-bearing. Only filtering the outgoing design was
+  // enough to avoid handing back the same thing, but the ordered picks —
+  // Most relevant, Cheapest first, Priciest first — then oscillated between
+  // exactly two designs forever, because the design just left kept returning
+  // to the head of the list. Random picks hid it: uniform random over the
+  // pool happens to cover everything, so this only ever showed up once
+  // Stumble order was anything other than Random.
+  if (current) lastPool = lastPool.filter((d) => d.key !== current.key);
+  if (!lastPool.length) return toast("Nothing else left in this pool — Stumble for a new search");
+  const pick = pickFrom(lastPool, settings);
+  lastPool = lastPool.filter((d) => d.key !== pick.key);
   pushUndo();
-  showDeal(pick);
-  setStatus(`Rerolled — ${lastPool.length} designs were in that pool`, "");
+  showDesign(pick);
+  setStatus(`Rerolled — ${lastPool.length} left in that pool`, "");
 }
 
 // Follow Redbubble's own "similar designs" from the one on screen.
@@ -853,7 +948,7 @@ async function similar() {
     lastPoolQuery = "similar to " + (current.title || "previous");
     const pick = pickFrom(pool, settings);
     pushUndo();
-    showDeal(pick);
+    showDesign(pick);
     setStatus(`Rabbit hole — ${pool.length} similar designs`, "");
   } catch (e) {
     setStatus("Couldn't follow similar designs", "err");
@@ -861,6 +956,40 @@ async function similar() {
     busy = false;
     $("btnSimilar").disabled = !current;
   }
+}
+
+// "I don't want to see this shop again" in one tap. The Filters tab is two
+// clicks away and needs the name typed in; this is the same action taken from
+// the thing that annoyed you.
+//
+// Two details that matter: the shop filter is switched *on* if it wasn't, or
+// the entry would sit in the list doing nothing; and an already-blocked shop
+// is reported rather than silently duplicated.
+async function blockCurrentShop() {
+  if (!current) return;
+  const shop = (current.artist || "").trim();
+  if (!shop) return toast("No shop name for this one — add it in Filters");
+
+  const already = settings.excludedShops.some(
+    (x) => String(x).toLowerCase() === shop.toLowerCase()
+  );
+  if (!already) {
+    settings.excludedShops.push(shop);
+    settings.useShopFilter = true;
+    await saveSettings();
+    renderFilters();
+  }
+
+  // It's on screen right now, so leaving it there after saying "not this shop"
+  // reads like nothing happened.
+  dismissCurrent();
+
+  toast(
+    already
+      ? `${shop} is already in your filter list`
+      : `${shop} added to your filter list — remove it in Filters`,
+    ""
+  );
 }
 
 // Turn this one down for good.
@@ -876,8 +1005,8 @@ async function dismissCurrent() {
   const rest = lastPool.filter((d) => d.key !== gone.key);
   const pick = rest.length ? pickFrom(rest, settings) : null;
   pushUndo();
-  if (pick) showDeal(pick);
-  else clearDeal();
+  if (pick) showDesign(pick);
+  else clearDesign();
   setStatus("Dismissed — you won't see it again", "");
 }
 
@@ -991,7 +1120,7 @@ async function resetAffinity() {
 
 // ---------------------------------------------------------------- helpers
 
-// "48 → 12 · 30 already dealt · 6 blocked tag"
+// "48 → 12 · 30 already seen · 6 blocked tag"
 function describeReasons(reasons, found, kept) {
   const bits = Object.entries(reasons)
     .sort((a, b) => b[1] - a[1])
@@ -1001,21 +1130,31 @@ function describeReasons(reasons, found, kept) {
   return bits.length ? `${head} · ${bits.join(" · ")}` : head;
 }
 
-function renderDealNote() {
-  const el = $("dealNote");
+function renderFilterNote() {
+  const el = $("filterNote");
   if (!el || !lastStats) return;
   const bits = Object.entries(lastStats.byReason || {})
     .sort((a, b) => b[1] - a[1])
     .map(([why, n]) => `${n} ${why}`);
   el.hidden = false;
-  el.innerHTML =
-    `<b>${lastStats.found} found, ${lastStats.kept} kept.</b>` +
-    (bits.length ? ` Dropped: ${bits.join(", ")}.` : " Nothing was filtered out.");
+  // Built with nodes rather than innerHTML. The reason strings come from our
+  // own filter code, so this was never injectable — but a template literal
+  // assembled from scraped site data is exactly the shape that turns into an
+  // XSS bug the day one of these strings stops being ours.
+  el.textContent = "";
+  const head = document.createElement("b");
+  head.textContent = `${lastStats.found} found, ${lastStats.kept} kept.`;
+  el.appendChild(head);
+  el.appendChild(
+    document.createTextNode(
+      bits.length ? ` Dropped: ${bits.join(", ")}.` : " Nothing was filtered out."
+    )
+  );
 }
 
-// ---------------------------------------------------------------- the deal
+// ------------------------------------------------------------- the design
 
-function showDeal(d) {
+function showDesign(d) {
   current = d;
 
   const img = $("previewImg");
@@ -1051,15 +1190,19 @@ function showDeal(d) {
   });
 
   $("btnOpen").disabled = false;
-  $("btnSkip").disabled = false;
-  $("btnReroll").disabled = lastPool.length < 2;
+  // lastPool now holds only designs you haven't been shown yet, so one left
+  // is still worth rerolling to. It used to need two, which meant the last
+  // design in a pool could never be reached by reroll.
+  $("btnReroll").disabled = lastPool.length < 1;
   $("btnSimilar").disabled = false;
   $("btnUndo").disabled = undoStack.length === 0;
   $("btnDismiss").disabled = false;
+  // No shop name means nothing to block, so don't offer the button.
+  $("btnBlockShop").disabled = !(d.artist || "").trim();
   resetHeart(true);
   resetSave();
 
-  // Deal means it was dealt — it counts as seen either way.
+  // "Shown" means no explicit verdict — it counts as seen either way.
   const limit = settings.historyLimit ?? 10000;
   history = history.filter((h) => h.key !== d.key);
   history.unshift({
@@ -1071,17 +1214,17 @@ function showDeal(d) {
     price: d.price == null ? null : d.price,
     ts: Date.now(),
     query: d.__query || lastPoolQuery || "",
-    verdict: "dealt",
+    verdict: "shown",
   });
   if (limit > 0) history = history.slice(0, limit);
   saveHistory();
 
   chrome.storage.local
-    .set({ [RB_STORAGE_KEYS.lastDeal]: d })
+    .set({ [RB_STORAGE_KEYS.lastShown]: d })
     .catch(() => {});
 }
 
-function clearDeal() {
+function clearDesign() {
   current = null;
   $("previewImg").classList.remove("show");
   $("previewImg").removeAttribute("src");
@@ -1091,14 +1234,13 @@ function clearDeal() {
   $("dSub").textContent = "—";
   $("dTags").textContent = "";
   $("btnOpen").disabled = true;
-  $("btnSkip").disabled = true;
   $("btnReroll").disabled = true;
   $("btnSimilar").disabled = true;
   $("btnDismiss").disabled = true;
   $("btnUndo").disabled = undoStack.length === 0;
   resetHeart(false);
   resetSave();
-  $("dealNote").hidden = true;
+  $("filterNote").hidden = true;
 }
 
 function resetSave() {
@@ -1110,7 +1252,7 @@ function resetSave() {
   $("saveLabel").textContent = kept ? "On your board" : "Save to board";
 }
 
-// Tag the deal on screen with a verdict, so history can show what you thought.
+// Tag the design on screen with a verdict, so history can show what you thought.
 function markVerdict(verdict) {
   if (!current) return;
   history = history.map((h) =>
@@ -1119,7 +1261,7 @@ function markVerdict(verdict) {
   saveHistory();
 }
 
-// enabled=true only when there is actually a deal on screen to heart.
+// enabled=true only when there is actually a design on screen to heart.
 function resetHeart(enabled) {
   const b = $("btnHeart");
   if (!b) return;
@@ -1240,10 +1382,10 @@ async function stumble() {
     }
 
     lastStats = { found: res.designs.length, kept: pool.length, byReason: reasons };
-    renderDealNote();
+    renderFilterNote();
 
     if (!pool.length) {
-      clearDeal();
+      clearDesign();
       setStatus(`Nothing survived: ${describeReasons(reasons)}`, "err");
       return;
     }
@@ -1253,7 +1395,7 @@ async function stumble() {
     const pick = pickFrom(pool, settings);
     pick.__query = sent;
     pushUndo();
-    showDeal(pick);
+    showDesign(pick);
     setStatus(describeReasons(reasons, res.designs.length, pool.length), "");
 
     if (settings.openOnStumble) {
@@ -1274,12 +1416,26 @@ async function stumble() {
 // ---------------------------------------------------------------- auto mode
 
 function restartAuto() {
-  clearInterval(autoTimer);
-  autoTimer = null;
-  if (!settings.autoMode) return;
-  autoTimer = setInterval(() => {
-    if (!busy) stumble();
-  }, Math.max(3, settings.autoSeconds) * 1000);
+  for (const t of autoTimers) clearInterval(t);
+  autoTimers = [];
+
+  if (settings.autoMode) {
+    autoTimers.push(
+      setInterval(() => {
+        if (!busy) stumble();
+      }, Math.max(3, settings.autoSeconds) * 1000)
+    );
+  }
+  if (settings.autoRerollMode) {
+    // reroll() walks the pool the current search already returned. When that
+    // pool is empty it falls back to stumble() by itself, so this timer can
+    // never end up doing nothing.
+    autoTimers.push(
+      setInterval(() => {
+        if (!busy) reroll();
+      }, Math.max(3, settings.autoRerollSeconds || 15) * 1000)
+    );
+  }
 }
 
 // ---------------------------------------------------------------- history
@@ -1289,8 +1445,8 @@ function queryStats() {
   const m = {};
   for (const h of history) {
     const q = h.query || "(unknown)";
-    if (!m[q]) m[q] = { dealt: 0, kept: 0, hearted: 0, opened: 0 };
-    m[q].dealt++;
+    if (!m[q]) m[q] = { shown: 0, kept: 0, hearted: 0, opened: 0 };
+    m[q].shown++;
     if (h.verdict === "kept") m[q].kept++;
     if (h.verdict === "hearted") m[q].hearted++;
     if (h.verdict === "opened") m[q].opened++;
@@ -1305,7 +1461,7 @@ function renderHistory() {
 
   const total = history.length;
   $("historyCount").textContent = total
-    ? `${total} dealt${total > RB_HISTORY_DISPLAY_CAP ? ` · showing the newest ${RB_HISTORY_DISPLAY_CAP}` : ""}.`
+    ? `${total} shown${total > RB_HISTORY_DISPLAY_CAP ? ` · showing the newest ${RB_HISTORY_DISPLAY_CAP}` : ""}.`
     : "Nothing drawn yet.";
 
   if (!total) return;
@@ -1340,7 +1496,7 @@ function renderHistory() {
 
     wrap.append(thumb, body);
 
-    if (h.verdict && h.verdict !== "dealt") {
+    if (h.verdict && h.verdict !== "shown") {
       const v = document.createElement("span");
       v.className = "verdict";
       v.textContent = h.verdict;
@@ -1352,10 +1508,10 @@ function renderHistory() {
       st.className = "stat";
       const rec = stats[h.query];
       st.textContent = rec
-        ? `${h.query}: ${rec.dealt}${rec.hearted ? " · " + rec.hearted + "♥" : ""}`
+        ? `${h.query}: ${rec.shown}${rec.hearted ? " · " + rec.hearted + "♥" : ""}`
         : h.query;
       st.title = rec
-        ? `${h.query} — ${rec.dealt} dealt, ${rec.hearted} hearted, ${rec.opened} opened`
+        ? `${h.query} — ${rec.shown} shown, ${rec.hearted} hearted, ${rec.opened} opened`
         : h.query;
       wrap.appendChild(st);
     }
@@ -1388,7 +1544,7 @@ document.addEventListener("keydown", (e) => {
     }
   }
 
-  // Modal is open — swallow shortcuts rather than dealing underneath it.
+  // Modal is open — swallow shortcuts rather than stumbling underneath it.
   if (anyModalOpen()) return;
 
   if (e.key === "Enter") {
@@ -1396,8 +1552,6 @@ document.addEventListener("keydown", (e) => {
     stumble();
   } else if (e.key === "o" || e.key === "O") {
     openCurrent();
-  } else if (e.key === "n" || e.key === "N") {
-    if (!$("btnSkip").disabled) stumble();
   } else if (e.key === "r" || e.key === "R") {
     if (!$("btnReroll").disabled) reroll();
   } else if (e.key === "s" || e.key === "S") {
@@ -1417,12 +1571,12 @@ document.addEventListener("keydown", (e) => {
 
 // The hotkey only reaches the background, so it stamps a flag and we pick it
 // up here — whether the panel was already open or is being opened right now.
-async function consumePendingDeal() {
+async function consumePendingStumble() {
   try {
-    const stored = await chrome.storage.local.get(RB_STORAGE_KEYS.pendingDeal);
-    const at = stored[RB_STORAGE_KEYS.pendingDeal];
+    const stored = await chrome.storage.local.get(RB_STORAGE_KEYS.pendingStumble);
+    const at = stored[RB_STORAGE_KEYS.pendingStumble];
     if (!at) return;
-    await chrome.storage.local.remove(RB_STORAGE_KEYS.pendingDeal);
+    await chrome.storage.local.remove(RB_STORAGE_KEYS.pendingStumble);
     if (Date.now() - at > 20000) return; // stale
     if (busy) return;
     await stumble();
@@ -1439,22 +1593,31 @@ async function consumePendingDeal() {
   renderQueries();
   renderFilters();
   bindSettings();
-  clearDeal();
+  clearDesign();
   restartAuto();
+
+  // Version shown in About comes from the manifest, never from a literal here.
+  // It was hardcoded once and shipped a release out of date.
+  try {
+    const el = $("modalVer");
+    if (el && chrome.runtime.getManifest) el.textContent = "v" + chrome.runtime.getManifest().version;
+  } catch (_) {
+    /* tests stub the namespace without getManifest */
+  }
 
   const n = enabledQueries().length;
   setStatus(n ? `Ready — ${n} quer${n === 1 ? "y" : "ies"} in the hat` : "Add some queries first");
 
   // Put back whatever was on screen when the panel was last closed.
-  const stored = await chrome.storage.local.get(RB_STORAGE_KEYS.lastDeal);
-  const back = stored[RB_STORAGE_KEYS.lastDeal];
+  const stored = await chrome.storage.local.get(RB_STORAGE_KEYS.lastShown);
+  const back = stored[RB_STORAGE_KEYS.lastShown];
   if (back && back.url) {
-    showDeal(back);
+    showDesign(back);
     setStatus("Picked up where you left off");
   }
 
   // Alt+Shift+S works whether or not the panel was already open.
-  await consumePendingDeal();
+  await consumePendingStumble();
 
   // Let settings edited in another window stay in sync.
   chrome.storage.onChanged.addListener(async (changes, area) => {
@@ -1466,7 +1629,7 @@ async function consumePendingDeal() {
       renderQueries();
       renderFilters();
     }
-    if (changes[RB_STORAGE_KEYS.pendingDeal]) consumePendingDeal();
+    if (changes[RB_STORAGE_KEYS.pendingStumble]) consumePendingStumble();
     if (changes[RB_STORAGE_KEYS.history] && activeTab === "history") renderHistory();
     if (changes[RB_STORAGE_KEYS.moodboard] && activeTab === "moodboard") renderBoard();
   });

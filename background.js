@@ -245,7 +245,7 @@ async function similarTo(url, excludeUrl) {
 // open. Stamp a flag and let the panel pick it up whenever it next loads.
 chrome.commands && chrome.commands.onCommand.addListener((cmd) => {
   if (cmd !== "stumble") return;
-  chrome.storage.local.set({ [RB_STORAGE_KEYS.pendingDeal]: Date.now() }).catch(() => {});
+  chrome.storage.local.set({ [RB_STORAGE_KEYS.pendingStumble]: Date.now() }).catch(() => {});
   try {
     chrome.sidePanel.open({}).catch(() => {});
   } catch (_) {

@@ -62,6 +62,7 @@ function boot() {
     },
     runtime: {
       onMessage: { addListener() {} },
+      getManifest: () => ({ version: "0.5.0" }),
       sendMessage: async (msg) => {
         if (msg.type === "rbstumbler:crawl")
           return {
@@ -132,7 +133,7 @@ $("excludeSeen").click();
 $("historyLimit").value = "2500";
 $("historyLimit").dispatchEvent(new w.Event("change"));
 
-// deal something so history gets written
+// show something so history gets written
 $("btnStumble").click();
 await sleep(400);
 

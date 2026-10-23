@@ -55,6 +55,7 @@ window.chrome = {
   },
   runtime: {
     onMessage: { addListener() {} },
+      getManifest: () => ({ version: "0.5.0" }),
     sendMessage: async (msg) => {
       calls.push(msg);
       if (msg.type === "rbstumbler:crawl") {
@@ -98,30 +99,41 @@ await sleep(200);
 const results = [];
 const check = (name, cond) => results.push([cond ? "PASS" : "FAIL", name]);
 
-check("heart disabled at boot (no deal yet)", $("btnHeart").disabled === true);
+check("heart disabled at boot (nothing on screen yet)", $("btnHeart").disabled === true);
 check("open disabled at boot", $("btnOpen").disabled === true);
-check("skip disabled at boot", $("btnSkip").disabled === true);
 
 $("btnStumble").click();
 await sleep(400);
 
-check("a deal is on screen", $("dTitle").textContent.startsWith("cat mom"));
+check("a design is on screen", $("dTitle").textContent.startsWith("cat mom"));
 check(
   "artist resolved, no '(unknown artist)'",
   !$("dSub").textContent.includes("unknown artist")
 );
 check("shows 'by isabel'", $("dSub").textContent.startsWith("by isabel"));
-check("OPEN enabled after deal", $("btnOpen").disabled === false);
-check("SKIP enabled after deal", $("btnSkip").disabled === false);
-check("HEART enabled after deal", $("btnHeart").disabled === false);
+check("OPEN enabled after showing a design", $("btnOpen").disabled === false);
+check("HEART enabled after showing a design", $("btnHeart").disabled === false);
 check(
   "heart label correct",
   $("heartLabel").textContent === "Heart it on Redbubble"
 );
 
-$("btnSkip").click();
+$("btnStumble").click();
 await sleep(400);
-check("HEART still enabled after re-deal", $("btnHeart").disabled === false);
+check("HEART still enabled after a re-show", $("btnHeart").disabled === false);
+
+check("Skip is gone", !$("btnSkip"), "btnSkip still exists in the markup");
+check(
+  "Dismiss and Block shop are marked destructive",
+  $("btnDismiss").className.includes("danger") && $("btnBlockShop").className.includes("danger"),
+  $("btnDismiss").className + " / " + $("btnBlockShop").className
+);
+check(
+  "Block shop tooltip points at the filter list",
+  /filter list/i.test($("btnBlockShop").getAttribute("title") || ""),
+  $("btnBlockShop").getAttribute("title")
+);
+
 
 $("btnHeart").click();
 await sleep(600);

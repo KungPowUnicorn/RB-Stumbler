@@ -119,7 +119,7 @@ body {
 }
 .view[hidden] { display: none; }
 
-/* ---------- deal card ---------- */
+/* ---------- design card ---------- */
 
 .card {
   background: var(--panel);
@@ -211,14 +211,34 @@ body {
 .chip:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .chip.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 
-.dealnote {
+/* Dismiss and Block shop are the two buttons that throw something away — a
+   design, or a whole shop. They get the same red as the destructive warn
+   button so they don't get pressed by reflex next to Heart and Save. */
+.chip.danger {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.chip.danger:hover:not(:disabled) {
+  color: #fff;
+  background: var(--warn);
+  border-color: var(--warn);
+}
+.chip.danger:disabled {
+  color: var(--dim);
+  border-color: var(--line);
+  background: transparent;
+  opacity: .55;
+}
+
+.filternote {
   margin-top: 8px;
   font-size: 11px;
   color: var(--dim);
   line-height: 1.4;
 }
-.dealnote[hidden] { display: none; }
-.dealnote b { color: var(--ink); font-weight: 600; }
+.filternote[hidden] { display: none; }
+.filternote b { color: var(--ink); font-weight: 600; }
 
 /* ---------- moodboard ---------- */
 

@@ -11,9 +11,9 @@
     <div id="status" class="status">Idle</div>
   </header>
 
-  <!-- ============================ DEAL ============================ -->
+  <!-- =========================== STUMBLE ========================== -->
   <section class="view" data-view="stumble">
-    <div class="card" id="dealCard">
+    <div class="card" id="designCard">
       <div class="preview" id="previewWrap">
         <img id="previewImg" alt="" />
         <div class="preview-empty" id="previewEmpty">
@@ -35,11 +35,16 @@
           <button id="btnSave" class="chip" disabled title="Keep this on your board">
             <span id="saveLabel">Save to board</span>
           </button>
-          <button id="btnDismiss" class="chip" disabled title="Never show this one again">
+          <button id="btnDismiss" class="chip danger" disabled
+                  title="Never show this one again — whatever your other settings say">
             <span>Dismiss</span>
           </button>
+          <button id="btnBlockShop" class="chip danger" disabled
+                  title="Shop added to filter list — remove it any time in Filters">
+            <span>Block shop</span>
+          </button>
         </div>
-        <div id="dealNote" class="dealnote" hidden></div>
+        <div id="filterNote" class="filternote" hidden></div>
       </div>
     </div>
 
@@ -51,10 +56,6 @@
       <div class="act">
         <button id="btnOpen" disabled>Open</button>
         <span class="act-desc">Open the design on screen in your browser</span>
-      </div>
-      <div class="act">
-        <button id="btnSkip" disabled>Skip</button>
-        <span class="act-desc">Turn this one down without opening it</span>
       </div>
       <div class="act">
         <button id="btnReroll" disabled>Reroll</button>
@@ -74,6 +75,13 @@
       <input type="checkbox" id="autoToggle" />
       <span>Auto-stumble every <input type="number" id="autoSeconds" min="3" max="600" step="1" />s</span>
     </label>
+    <label class="auto">
+      <input type="checkbox" id="autoRerollToggle" />
+      <span>Auto-reroll every <input type="number" id="autoRerollSeconds" min="3" max="600" step="1" />s</span>
+    </label>
+    <p class="note">Auto-reroll works through the search already on screen, so it
+      never burns a query. When that pool runs out it falls back to a normal
+      stumble on its own.</p>
   </section>
 
   <!-- =========================== QUERIES =========================== -->
@@ -139,6 +147,21 @@
         <input type="text" id="newShop" placeholder="Add a shop…" />
         <button id="btnAddShop">Add</button>
       </div>
+    </div>
+
+    <div class="block">
+      <label class="toggle">
+        <input type="checkbox" id="useShopWhitelist" />
+        <span>Only these shops</span>
+      </label>
+      <ul class="list compact" id="shopWhitelistList"></ul>
+      <div class="row">
+        <input type="text" id="newShopWhitelist" placeholder="Allow a shop…" />
+        <button id="btnAddShopWhitelist">Add</button>
+      </div>
+      <p class="note">Whole shop names only, and no partial matching — typing
+        <code>isabel</code> allows <code>isabelshop</code> but not
+        <code>isabelshop123</code>. Leave empty and it applies no restriction.</p>
     </div>
 
     <div class="block">
@@ -317,7 +340,8 @@
   <div class="modal-backdrop" id="modal" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <h2 id="modalTitle"><img src="icon.svg" alt="" class="modal-icon" />RB Stumbler</h2>
-      <p class="modal-ver">v0.4</p>
+      <!-- filled from manifest.json at boot, so it can never drift -->
+      <p class="modal-ver" id="modalVer"></p>
 
       <h3>What it does</h3>
       <p>Picks one of your search queries at random, searches Redbubble, throws out whatever
@@ -328,7 +352,6 @@
       <table class="keys">
         <tr><td><kbd>Enter</kbd></td><td>Stumble a new design</td></tr>
         <tr><td><kbd>O</kbd></td><td>Open the design on screen</td></tr>
-        <tr><td><kbd>N</kbd></td><td>Skip to another</td></tr>
         <tr><td><kbd>R</kbd></td><td>Reroll from the same search</td></tr>
         <tr><td><kbd>S</kbd></td><td>Find similar designs</td></tr>
         <tr><td><kbd>D</kbd></td><td>Dismiss this one for good</td></tr>
@@ -339,11 +362,13 @@
       </table>
       <p class="note">The shortcut works anywhere in Chrome. Rebind it at
         <code>chrome://extensions/shortcuts</code> if it clashes with something.</p>
+      <p class="note">In Firefox, rebind it from the Add-ons Manager.</p>
 
       <h3>Privacy</h3>
       <p>Nothing leaves your machine. The extension has permission for
         <code>redbubble.com</code> only, and stores your settings and history in
-        <code>chrome.storage.local</code>. Clearing history in the History tab wipes it.</p>
+        browser-local storage that nothing outside the extension can read.
+        Clearing history in the History tab wipes it.</p>
 
       <button id="btnCloseModal" class="primary">Close</button>
     </div>

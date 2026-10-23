@@ -123,7 +123,7 @@ const RB_SUGGESTED_TAGS = [
 ];
 
 // History is stored as one array under one storage key. Big is fine until the
-// serialised blob gets expensive to rewrite on every deal — this budget keeps
+// serialised blob gets expensive to rewrite on every design shown — this keeps
 // it well inside chrome.storage's quota no matter what the user sets.
 const RB_HISTORY_BYTE_BUDGET = 4 * 1024 * 1024; // 4 MB
 const RB_HISTORY_DISPLAY_CAP = 300; // never render 10k <li> into the panel
@@ -142,8 +142,14 @@ const RB_DEFAULT_SETTINGS = {
   // --- filters (each list has an independent master toggle) -------------
   useTagFilter: false,
   excludedTags: [], // starts empty — use the preset button if you want one
-  useShopFilter: false,
+    useShopFilter: false,
   excludedShops: [],
+    // Allowlist. Exact, case-insensitive matching — unlike the blocklist, which
+    // matches loosely on purpose. On a blocklist, "isabel" catching
+    // "isabelshop123" is a convenience; on an allowlist it would let through
+    // every shop that happens to contain the word.
+  useShopWhitelist: false,
+    shopWhitelist: [],
   useProductTypeFilter: false,
   productTypes: [],
   usePriceFilter: false,
@@ -172,11 +178,16 @@ const RB_DEFAULT_SETTINGS = {
   openTarget: "new", // new = a new tab, same = replace whatever tab you're on
   autoMode: false,
   autoSeconds: 15,
+  // Auto-reroll walks the pool the current search already returned: no new
+  // search, no query burned. If the pool runs dry, reroll() falls back to a
+  // fresh stumble on its own, so this never dead-ends.
+  autoRerollMode: false,
+  autoRerollSeconds: 15,
   historyLimit: 10000,
 };
 
 // How the next design gets chosen. This used to be two separate settings —
-// "Sort" in the Search section and "Deal order" in Dealing — which made it
+// "Sort" in the Search section and "Stumble order" in Stumbling — which made it
 // look like you had to pick twice. It isn't: asking Redbubble for newest
 // results and then picking the newest one is a single decision, so it's a
 // single dropdown now.
@@ -204,6 +215,9 @@ function rbStumbleOrder(key) {
   return RB_STUMBLE_ORDER[key] || RB_STUMBLE_ORDER.random;
 }
 
+// Storage keys as of v0.5.0. v0.4.0 called the last two `_deal`; renaming
+// them here is why RB_LEGACY_KEYS exists below — without the copy in
+// loadAll() an upgrade would quietly forget what was last on screen.
 const RB_STORAGE_KEYS = {
   settings: "rbstumbler_settings",
   history: "rbstumbler_history",
@@ -212,6 +226,20 @@ const RB_STORAGE_KEYS = {
   affinity: "rbstumbler_affinity", // { tags: {token: n}, shops: {name: n} }
   moodboard: "rbstumbler_moodboard", // designs you explicitly kept
   dismissed: "rbstumbler_dismissed", // seen and turned down on purpose
-  lastDeal: "rbstumbler_last_deal", // so the panel reopens on what you had
-  pendingDeal: "rbstumbler_pending_deal", // timestamp set by the hotkey
+  lastShown: "rbstumbler_last_shown", // so the panel reopens on what you had
+  pendingStumble: "rbstumbler_pending_stumble", // timestamp set by the hotkey
 };
+
+// v0.4.0 stored these under names containing the word we purged in v0.5.0.
+// One-time copy so upgrading doesn't silently drop the panel's
+// restore-last-shown behaviour. Safe to run every boot: the legacy keys are
+// removed once copied, so it does nothing after the first time.
+const RB_LEGACY_KEYS = {
+  rbstumbler_last_deal: RB_STORAGE_KEYS.lastShown,
+};
+
+// The old pending flag is deliberately *not* carried across. It is a transient
+// "the user pressed the hotkey while the panel was shut" signal, and writing
+// the new key would immediately fire the panel's own handler and replay a
+// stumble the user never asked for. Better to drop it.
+const RB_LEGACY_DROP = ["rbstumbler_pending_deal"];
